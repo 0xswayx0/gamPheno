@@ -12,66 +12,64 @@ Because metric extraction operates directly on the simulated posterior density m
 
 ## Installation
 
-You can install the development version of `gamPheno` from GitHub using `devtools` or `remotes`:
+You can install `gamPheno` from GitHub using `remotes`, `pak`, or `devtools`:
 
 ```r
-# install.packages("devtools")
-devtools::install_github("0xswayx0/gamPheno")
+# install.packages("remotes")
+remotes::install_github("0xswayx0/gamPheno")
+
+# Or via pak / devtools:
+# pak::pak("0xswayx0/gamPheno")
+# devtools::install_github("0xswayx0/gamPheno")
 ```
 
 ---
 
-## Quick-Start (Runnable Out-of-the-Box)
+## Complete Runnable Workflow (`sim_carabids`)
 
-`gamPheno` (v0.8.0) ships with a lightweight simulated biweekly trapping dataset (`sim_carabids`) so you can test the full workflow immediately:
+`gamPheno` (v0.8.0) includes a simulated biweekly pitfall trapping dataset (`sim_carabids`) so you can run the entire workflow and every package function out of the box without external model files:
 
 ```r
 library(gamPheno)
 library(mgcv)
 
+# 1. Load the built-in simulated dataset and fit a cyclic spatiotemporal GAMM
 data(sim_carabids)
 mod_sim <- gam(
-  Count ~ s(DOY, bs = "cc", k = 12) + s(Latitude, k = 4) + s(GDD5_YTD, k = 4) +
-    ti(DOY, Latitude, bs = c("cc", "cr"), k = c(8, 4)) + offset(LogEffort),
-  family = poisson(), data = sim_carabids, knots = list(DOY = c(0.5, 365.5))
+  Count ~ s(DOY, bs = "cc", k = 12) +
+    s(Latitude, bs = "cr", k = 4) +
+    s(GDD5_YTD, bs = "cr", k = 4) +
+    ti(DOY, Latitude, bs = c("cc", "cr"), k = c(8, 4)) +
+    ti(DOY, GDD5_YTD, bs = c("cc", "cr"), k = c(8, 4)) +
+    s(SubSite, bs = "re") +
+    s(fYear, bs = "re") +
+    offset(LogEffort),
+  family = poisson(),
+  data = sim_carabids,
+  knots = list(DOY = c(0.5, 365.5))
 )
-
-sim_warm <- simulate_posterior_density(mod_sim, create_newdata(mod_sim, Latitude = "5%", GDD5_YTD = "95%"))
-sim_ref  <- simulate_posterior_density(mod_sim, create_newdata(mod_sim, Latitude = "mean", GDD5_YTD = "mean"))
-
-estimate_centroid(sim_warm)
-estimate_duration(sim_warm)
-estimate_divergence(sim_warm, sim_ref)
-plot_phenology_curve(sim_warm, log = TRUE, color = "#D55E00")
-```
-
----
-
-## Empirical Workflow Example (*Nebria brevicollis*)
-
-```r
-library(gamPheno)
-library(mgcv)
-
-# 1. Load a pre-fitted mgcv GAM/BAM object
-mod <- readRDS("Nebria_brevicollis_Champion_GAMM.rds")
 
 # 2. Create 365-day prediction grids using create_newdata()
 # Option A: Programmatic creation using hull presets ("min", "5%", "10%", "25%", "mean", "75%", "90%", "95%", "max")
-newdata_warm <- create_newdata(mod, doy = "DOY", Latitude = "5%",  GDD5_YTD = "95%")
-newdata_cold <- create_newdata(mod, doy = "DOY", Latitude = "95%", GDD5_YTD = "5%")
-newdata_ref  <- create_newdata(mod, doy = "DOY", Latitude = "mean", GDD5_YTD = "mean")
+newdata_warm <- create_newdata(mod_sim, doy = "DOY", Latitude = "5%",  GDD5_YTD = "95%")
+newdata_cold <- create_newdata(mod_sim, doy = "DOY", Latitude = "95%", GDD5_YTD = "5%")
+newdata_ref  <- create_newdata(mod_sim, doy = "DOY", Latitude = "mean", GDD5_YTD = "mean")
 
 # Option B: Interactive visual scenario builder (launches Shiny app with live curve comparison)
-# newdata_custom <- create_newdata(mod, doy = "DOY", interactive = TRUE)
+# newdata_custom <- create_newdata(mod_sim, doy = "DOY", interactive = TRUE)
 
 # 3. Step 1: Generate normalized posterior probability density matrices (365 x n_sims)
-sim_warm <- simulate_posterior_density(mod, newdata_warm, doy = "DOY", n_sims = 1000)
-sim_cold <- simulate_posterior_density(mod, newdata_cold, doy = "DOY", n_sims = 1000)
-sim_ref  <- simulate_posterior_density(mod, newdata_ref,  doy = "DOY", n_sims = 1000)
+sim_warm <- simulate_posterior_density(mod_sim, newdata_warm, doy = "DOY", n_sims = 500)
+sim_cold <- simulate_posterior_density(mod_sim, newdata_cold, doy = "DOY", n_sims = 500)
+sim_ref  <- simulate_posterior_density(mod_sim, newdata_ref,  doy = "DOY", n_sims = 500)
+
+# Inspect attached scenario metadata and path-tracked biological-year origin (DOBY)
+sim_warm$doby_origin
+sim_warm$scenario
 
 # 4. Step 2a: Extract single-curve phenological metrics (with 95% Credible Intervals)
-estimate_centroid(sim_warm)
+# doby_origin supports "auto" (default path-tracked steepest descent), "scenario", or a custom DOY (1:365)
+estimate_centroid(sim_warm, doby_origin = "auto")
 estimate_duration(sim_warm, threshold_fraction = 0.05)
 estimate_modality(sim_warm, rel_prominence = 0.50, abs_threshold = 0.25)
 estimate_peak(sim_warm)
@@ -79,13 +77,13 @@ estimate_peak(sim_warm)
 # 5. Step 2b: Extract comparative metrics between two curves
 # (Works for two scenarios of one species OR two different species under the same scenario)
 estimate_divergence(sim_warm, sim_ref)
-estimate_onset(sim_warm, sim_ref, threshold_fraction = 0.05)
-estimate_offset(sim_warm, sim_ref, threshold_fraction = 0.05)
+estimate_onset(sim_warm, sim_ref, threshold_fraction = 0.05, doby_origin = "auto")
+estimate_offset(sim_warm, sim_ref, threshold_fraction = 0.05, doby_origin = "auto")
 
 # 6. Visualize posterior density curves and continuous reaction norms
 plot_phenology_curve(sim_warm, log = TRUE, color = "#D55E00")
-plot_metric_gradient(mod, metric = "centroid", x_axis = "Latitude")
-plot_metric_gradient(mod, metric = "onset", x_axis = "GDD5_YTD", color = "#CC79A7")
+plot_metric_gradient(mod_sim, metric = "centroid", x_axis = "Latitude", n_steps = 15, n_sims = 200)
+plot_metric_gradient(mod_sim, metric = "onset", x_axis = "GDD5_YTD", n_steps = 15, n_sims = 200, color = "#CC79A7")
 ```
 
 ---
